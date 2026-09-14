@@ -183,6 +183,7 @@ const BASE_PAY = 10;
 const EXTRA_GOAL = 5;
 const EXTRA_BONUS = 5;
 const FAIL_LIMIT = 3;
+const AVISOS_LIMIT = 5;
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
@@ -215,6 +216,11 @@ function weekKeyFromMonday(monday) {
   return `${year}-W${pad(week)}`;
 }
 
+function isCajonWeek(monday) {
+  const { week } = getISOWeek(monday);
+  return week % 2 === 0;
+}
+
 function formatShort(date) {
   return `${date.getDate()} ${MONTHS[date.getMonth()]}`;
 }
@@ -228,6 +234,7 @@ function emptyWeekData() {
     cama: emptyTask7(),
     ropa: emptyTask7(),
     cuarto: { proposed: false, confirmed: false },
+    cajon: { proposed: false, confirmed: false },
     avisosLavavajillas: 0,
     extras: {
       basura: emptyTask7(),
@@ -253,6 +260,7 @@ function normalizeWeekData(raw) {
     cama: normalizeTask(raw.cama),
     ropa: normalizeTask(raw.ropa),
     cuarto: raw.cuarto ? { proposed: !!raw.cuarto.proposed, confirmed: !!raw.cuarto.confirmed } : base.cuarto,
+    cajon: raw.cajon ? { proposed: !!raw.cajon.proposed, confirmed: !!raw.cajon.confirmed } : base.cajon,
     avisosLavavajillas: typeof raw.avisosLavavajillas === 'number' ? raw.avisosLavavajillas : 0,
     extras: {
       basura: normalizeTask(extras.basura),
@@ -319,6 +327,7 @@ function BancoDeMisiones() {
   const isCurrentWeek = weekOffset === 0;
   const isPastWeek = weekOffset < 0;
   const todayIndex = (today.getDay() + 6) % 7;
+  const cajonActive = isCajonWeek(monday);
 
   useEffect(() => {
     (async () => {
@@ -430,6 +439,10 @@ function BancoDeMisiones() {
     setWeekData((prev) => ({ ...prev, cuarto: { ...prev.cuarto, [field]: !prev.cuarto[field] } }));
   };
 
+  const toggleCajon = () => {
+    setWeekData((prev) => ({ ...prev, cajon: { ...prev.cajon, [field]: !prev.cajon[field] } }));
+  };
+
   const toggleExtra = (key, i) => {
     setWeekData((prev) => {
       const task = prev.extras[key];
@@ -465,11 +478,13 @@ function BancoDeMisiones() {
   const lavaFails = weekData.avisosLavavajillas;
   const camaFailed = camaFails >= FAIL_LIMIT;
   const ropaFailed = ropaFails >= FAIL_LIMIT;
-  const lavaFailed = lavaFails >= FAIL_LIMIT;
+  const lavaFailed = lavaFails >= AVISOS_LIMIT;
   const cuartoFailed = isPastWeek && !weekData.cuarto.confirmed;
   const cuartoPending = !weekData.cuarto.confirmed && !cuartoFailed;
+  const cajonFailed = cajonActive && isPastWeek && !weekData.cajon.confirmed;
+  const cajonPending = cajonActive && !weekData.cajon.confirmed && !cajonFailed;
 
-  const basePayOk = !camaFailed && !ropaFailed && !lavaFailed && !cuartoFailed;
+  const basePayOk = !camaFailed && !ropaFailed && !lavaFailed && !cuartoFailed && !cajonFailed;
   const baseEarned = basePayOk ? BASE_PAY : 0;
 
   const camaConfirmed = weekData.cama.confirmed.filter(Boolean).length;
@@ -591,7 +606,7 @@ function BancoDeMisiones() {
         {/* TAREA BASE */}
         <section className="gt-panel">
           <h2 className="gt-panel__title">Tareas base <span className="gt-panel__amount">{BASE_PAY.toFixed(2)} €</span></h2>
-          <p className="gt-panel__hint">2 fallos permitidos por tarea. El cuarto no tiene margen.</p>
+          <p className="gt-panel__hint">2 fallos permitidos por tarea, 4 avisos. El cuarto y el cajón del baño no tienen margen.</p>
 
           <TaskRow
             label="Hacer la cama"
@@ -631,9 +646,36 @@ function BancoDeMisiones() {
             <div className="gt-pending">pendiente esta semana</div>
           )}
 
+          {cajonActive ? (
+            <>
+              <div className="gt-weekly">
+                <div>
+                  <div className="gt-weekly__label">Ordenar el cajón del baño</div>
+                  <div className="gt-panel__sub">semana sí, semana no</div>
+                </div>
+                <Cell
+                  proposed={weekData.cajon.proposed}
+                  confirmed={weekData.cajon.confirmed}
+                  onClick={toggleCajon}
+                  ariaLabel="Cajón del baño ordenado esta semana"
+                  sublabel=""
+                />
+              </div>
+              {cajonFailed && (
+                <div className="gt-warning"><AlertTriangle size={13} /> tarea fallida</div>
+              )}
+              {cajonPending && !cajonFailed && (
+                <div className="gt-pending">pendiente esta semana</div>
+              )}
+            </>
+          ) : (
+            <div className="gt-pending">🗄️ Cajón del baño: esta semana no toca</div>
+          )}
+
           <div className="gt-dish">
             <div>
-              <div className="gt-weekly__label">Guardar sus platos en el lavavajillas</div>
+              <div className="gt-weekly__label">Avisos del día a día</div>
+              <div className="gt-panel__sub">lavavajillas sin guardar, zapatos/ropa en el salón, o baño desordenado</div>
             </div>
             <div className="gt-dish__controls">
               <button className="gt-round-btn" onClick={() => addAviso(-1)} aria-label="Quitar un aviso"><Minus size={14} /></button>
@@ -641,7 +683,7 @@ function BancoDeMisiones() {
               <button className="gt-round-btn gt-round-btn--warn" onClick={() => addAviso(1)} aria-label="Añadir un aviso"><Plus size={14} /></button>
             </div>
           </div>
-          <Lives failCount={lavaFails} limit={FAIL_LIMIT} />
+          <Lives failCount={lavaFails} limit={AVISOS_LIMIT} />
 
           {!basePayOk && (
             <div className="gt-status gt-status--failed"><AlertTriangle size={14} /> paga base perdida esta semana</div>
