@@ -319,6 +319,8 @@ function BancoDeMisiones() {
   const [pinValue2, setPinValue2] = useState('');
   const [pinError, setPinError] = useState('');
   const loadTokenRef = useRef(0);
+  // CORRECCIÓN: guarda qué semana corresponde a los datos que hay en pantalla
+  const loadedWeekRef = useRef(null);
 
   const today = new Date();
   const monday = addDays(getMonday(today), weekOffset * 7);
@@ -342,25 +344,30 @@ function BancoDeMisiones() {
     })();
   }, []);
 
+  // CARGA: al cambiar de semana, marca que aún no hay datos válidos y carga los de la semana nueva
   useEffect(() => {
     const token = ++loadTokenRef.current;
+    loadedWeekRef.current = null;
     setWeekData(null);
     setConfirmReset(false);
     (async () => {
       try {
         const res = await window.storage.get(`week:${weekKey}`, true);
         if (loadTokenRef.current !== token) return;
+        loadedWeekRef.current = weekKey;
         setWeekData(res ? normalizeWeekData(JSON.parse(res.value)) : emptyWeekData());
       } catch (e) {
         if (loadTokenRef.current !== token) return;
+        loadedWeekRef.current = weekKey;
         setWeekData(emptyWeekData());
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekKey]);
 
+  // GUARDADO: solo si los datos en pantalla pertenecen a la semana que se está viendo
   useEffect(() => {
-    if (weekData === null) return;
+    if (weekData === null || loadedWeekRef.current !== weekKey) return;
     (async () => {
       try {
         await window.storage.set(`week:${weekKey}`, JSON.stringify(weekData), true);
