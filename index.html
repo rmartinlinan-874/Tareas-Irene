@@ -170,8 +170,10 @@ const Lock = (p) => <Icon name="lock" {...p} />;
 
 const PLAYER_NAME = 'Irene';
 
-const DAY_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
-const DAY_FULL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+// CORRECCIÓN: la semana ahora empieza en sábado, así que el orden de los
+// días (y de sus letras/nombres) cambia: S, D, L, M, X, J, V.
+const DAY_LETTERS = ['S', 'D', 'L', 'M', 'X', 'J', 'V'];
+const DAY_FULL = ['Sábado', 'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 const EXTRA_TASKS = [
@@ -188,10 +190,13 @@ const AVISOS_LIMIT = 5;
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
-function getMonday(d) {
+// CORRECCIÓN: antes devolvía el lunes de la semana; ahora devuelve el
+// sábado (el primer día de la semana en la app), retrocediendo hasta el
+// sábado más reciente.
+function getWeekStart(d) {
   const date = new Date(d);
-  const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
+  const day = date.getDay(); // 0=domingo … 6=sábado
+  const diff = -((day + 1) % 7);
   date.setDate(date.getDate() + diff);
   date.setHours(0, 0, 0, 0);
   return date;
@@ -212,13 +217,22 @@ function getISOWeek(date) {
   return { week: weekNo, year: d.getUTCFullYear() };
 }
 
-function weekKeyFromMonday(monday) {
-  const { week, year } = getISOWeek(monday);
-  return `${year}-W${pad(week)}`;
+// CORRECCIÓN: antes la clave de guardado usaba el número de semana ISO
+// (pensado para semanas que empiezan en lunes). Como ahora la semana
+// empieza en sábado, esa numeración ya no encaja con los días mostrados
+// y podría mezclar datos con las semanas antiguas guardadas con el
+// esquema anterior. Para evitarlo, la clave nueva usa directamente la
+// fecha del sábado con el que empieza la semana (p.ej. "2026-09-26"),
+// que no choca con ninguna clave "2026-Wxx" ya guardada.
+function weekKeyFromStart(weekStart) {
+  const y = weekStart.getFullYear();
+  const m = pad(weekStart.getMonth() + 1);
+  const d = pad(weekStart.getDate());
+  return `${y}-${m}-${d}`;
 }
 
-function isCajonWeek(monday) {
-  const { week } = getISOWeek(monday);
+function isCajonWeek(weekStart) {
+  const { week } = getISOWeek(weekStart);
   return week % 2 === 0;
 }
 
@@ -348,13 +362,14 @@ function BancoDeMisiones() {
   const loadedWeekRef = useRef(null);
 
   const today = new Date();
-  const monday = addDays(getMonday(today), weekOffset * 7);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  const weekKey = weekKeyFromMonday(monday);
+  const weekStart = addDays(getWeekStart(today), weekOffset * 7);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const weekKey = weekKeyFromStart(weekStart);
   const isCurrentWeek = weekOffset === 0;
   const isPastWeek = weekOffset < 0;
-  const todayIndex = (today.getDay() + 6) % 7;
-  const cajonActive = isCajonWeek(monday);
+  // CORRECCIÓN: índice de hoy dentro de la semana, ahora que el día 0 es sábado
+  const todayIndex = (today.getDay() + 1) % 7;
+  const cajonActive = isCajonWeek(weekStart);
 
   useEffect(() => {
     (async () => {
