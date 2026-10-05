@@ -119,6 +119,7 @@ const ICON_PATHS = {
     <polyline points="9 12 11 14 15 10" />
   </>,
   heart: <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />,
+  x: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
   plus: <><path d="M12 5v14M5 12h14" /></>,
   minus: <path d="M5 12h14" />,
   gift: <>
@@ -157,6 +158,7 @@ const Trophy = (p) => <Icon name="trophy" {...p} />;
 const User = (p) => <Icon name="user" {...p} />;
 const ShieldCheck = (p) => <Icon name="shieldCheck" {...p} />;
 const Heart = (p) => <Icon name="heart" {...p} />;
+const X = (p) => <Icon name="x" {...p} />;
 const Plus = (p) => <Icon name="plus" {...p} />;
 const Minus = (p) => <Icon name="minus" {...p} />;
 const Gift = (p) => <Icon name="gift" {...p} />;
@@ -164,16 +166,13 @@ const AlertTriangle = (p) => <Icon name="alertTriangle" {...p} />;
 const Lock = (p) => <Icon name="lock" {...p} />;
 
 // =====================================================================
-// A partir de aquí: la app original, sin cambios de lógica salvo lo
-// señalado en los comentarios "CORRECCIÓN"
+// A partir de aquí: la app original, sin cambios de lógica
 // =====================================================================
 
 const PLAYER_NAME = 'Irene';
 
-// CORRECCIÓN: la semana ahora empieza en sábado, así que el orden de los
-// días (y de sus letras/nombres) cambia: S, D, L, M, X, J, V.
-const DAY_LETTERS = ['S', 'D', 'L', 'M', 'X', 'J', 'V'];
-const DAY_FULL = ['Sábado', 'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+const DAY_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+const DAY_FULL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 const EXTRA_TASKS = [
@@ -190,13 +189,10 @@ const AVISOS_LIMIT = 5;
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
-// CORRECCIÓN: antes devolvía el lunes de la semana; ahora devuelve el
-// sábado (el primer día de la semana en la app), retrocediendo hasta el
-// sábado más reciente.
-function getWeekStart(d) {
+function getMonday(d) {
   const date = new Date(d);
-  const day = date.getDay(); // 0=domingo … 6=sábado
-  const diff = -((day + 1) % 7);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
   date.setDate(date.getDate() + diff);
   date.setHours(0, 0, 0, 0);
   return date;
@@ -217,22 +213,13 @@ function getISOWeek(date) {
   return { week: weekNo, year: d.getUTCFullYear() };
 }
 
-// CORRECCIÓN: antes la clave de guardado usaba el número de semana ISO
-// (pensado para semanas que empiezan en lunes). Como ahora la semana
-// empieza en sábado, esa numeración ya no encaja con los días mostrados
-// y podría mezclar datos con las semanas antiguas guardadas con el
-// esquema anterior. Para evitarlo, la clave nueva usa directamente la
-// fecha del sábado con el que empieza la semana (p.ej. "2026-09-26"),
-// que no choca con ninguna clave "2026-Wxx" ya guardada.
-function weekKeyFromStart(weekStart) {
-  const y = weekStart.getFullYear();
-  const m = pad(weekStart.getMonth() + 1);
-  const d = pad(weekStart.getDate());
-  return `${y}-${m}-${d}`;
+function weekKeyFromMonday(monday) {
+  const { week, year } = getISOWeek(monday);
+  return `${year}-W${pad(week)}`;
 }
 
-function isCajonWeek(weekStart) {
-  const { week } = getISOWeek(weekStart);
+function isCajonWeek(monday) {
+  const { week } = getISOWeek(monday);
   return week % 2 === 0;
 }
 
@@ -244,16 +231,27 @@ function emptyTask7() {
   return { proposed: Array(7).fill(false), confirmed: Array(7).fill(false) };
 }
 
-// CORRECCIÓN: la tarea "libre" ahora es un contador propuesto/confirmado,
-// igual que el resto de tareas, en vez de un número que cualquiera podía tocar.
-function emptyLibreCounter() {
-  return { proposed: 0, confirmed: 0 };
+// Cama y ropa se dan por cumplidas cada día. Solo se guardan los FALLOS:
+// los días que el padre ha desmarcado.
+function emptyFails7() {
+  return Array(7).fill(false);
+}
+
+function normalizeFails(rawFail, legacyTask, pastDays) {
+  if (Array.isArray(rawFail)) return Array.from({ length: 7 }, (_, i) => !!rawFail[i]);
+  // Semana guardada con el sistema anterior (proposed/confirmed): los días ya
+  // pasados que no estaban confirmados pasan a contar como fallo, para que
+  // el recibo de esa semana no cambie.
+  if (legacyTask && Array.isArray(legacyTask.confirmed)) {
+    return Array.from({ length: 7 }, (_, i) => i < pastDays && !legacyTask.confirmed[i]);
+  }
+  return emptyFails7();
 }
 
 function emptyWeekData() {
   return {
-    cama: emptyTask7(),
-    ropa: emptyTask7(),
+    camaFail: emptyFails7(),
+    ropaFail: emptyFails7(),
     cuarto: { proposed: false, confirmed: false },
     cajon: { proposed: false, confirmed: false },
     avisosLavavajillas: 0,
@@ -261,7 +259,7 @@ function emptyWeekData() {
       basura: emptyTask7(),
       recoger: emptyTask7(),
       barrer: emptyTask7(),
-      libre: emptyLibreCounter(),
+      libre: 0,
     },
   };
 }
@@ -273,30 +271,13 @@ function normalizeTask(t) {
   return { proposed: fix(t.proposed), confirmed: fix(t.confirmed) };
 }
 
-// CORRECCIÓN: normaliza el nuevo contador y también migra el formato
-// antiguo (un simple número) para no perder datos ya guardados: si
-// encuentra el número viejo, lo trata como "confirmado" (ya sumaba al
-// bono) y deja "propuesto" igualado, para que no aparezca como pendiente.
-function normalizeLibreCounter(raw) {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    const n = Math.max(0, raw);
-    return { proposed: n, confirmed: n };
-  }
-  if (raw && typeof raw === 'object') {
-    const proposed = typeof raw.proposed === 'number' ? Math.max(0, raw.proposed) : 0;
-    const confirmed = typeof raw.confirmed === 'number' ? Math.max(0, raw.confirmed) : 0;
-    return { proposed, confirmed };
-  }
-  return emptyLibreCounter();
-}
-
-function normalizeWeekData(raw) {
+function normalizeWeekData(raw, pastDays = 0) {
   const base = emptyWeekData();
   if (!raw || typeof raw !== 'object') return base;
   const extras = raw.extras || {};
   return {
-    cama: normalizeTask(raw.cama),
-    ropa: normalizeTask(raw.ropa),
+    camaFail: normalizeFails(raw.camaFail, raw.cama, pastDays),
+    ropaFail: normalizeFails(raw.ropaFail, raw.ropa, pastDays),
     cuarto: raw.cuarto ? { proposed: !!raw.cuarto.proposed, confirmed: !!raw.cuarto.confirmed } : base.cuarto,
     cajon: raw.cajon ? { proposed: !!raw.cajon.proposed, confirmed: !!raw.cajon.confirmed } : base.cajon,
     avisosLavavajillas: typeof raw.avisosLavavajillas === 'number' ? raw.avisosLavavajillas : 0,
@@ -304,7 +285,7 @@ function normalizeWeekData(raw) {
       basura: normalizeTask(extras.basura),
       recoger: normalizeTask(extras.recoger),
       barrer: normalizeTask(extras.barrer),
-      libre: normalizeLibreCounter(extras.libre),
+      libre: typeof extras.libre === 'number' ? extras.libre : 0,
     },
   };
 }
@@ -357,19 +338,19 @@ function BancoDeMisiones() {
   const [pinValue2, setPinValue2] = useState('');
   const [pinError, setPinError] = useState('');
   const loadTokenRef = useRef(0);
-  // Guarda a qué semana pertenecen los datos que hay en pantalla, para
-  // no guardar por error los datos de una semana en la clave de otra.
-  const loadedWeekRef = useRef(null);
 
   const today = new Date();
-  const weekStart = addDays(getWeekStart(today), weekOffset * 7);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const weekKey = weekKeyFromStart(weekStart);
+  const monday = addDays(getMonday(today), weekOffset * 7);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const weekKey = weekKeyFromMonday(monday);
   const isCurrentWeek = weekOffset === 0;
   const isPastWeek = weekOffset < 0;
-  // CORRECCIÓN: índice de hoy dentro de la semana, ahora que el día 0 es sábado
-  const todayIndex = (today.getDay() + 1) % 7;
-  const cajonActive = isCajonWeek(weekStart);
+  const todayIndex = (today.getDay() + 6) % 7;
+  const cajonActive = isCajonWeek(monday);
+  // Días ya terminados (antes de hoy) y días que ya han "llegado" (incluido hoy).
+  const pastDays = isPastWeek ? 7 : isCurrentWeek ? todayIndex : 0;
+  const arrivedCount = isPastWeek ? 7 : isCurrentWeek ? todayIndex + 1 : 0;
+  const loadedWeekKeyRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -384,30 +365,30 @@ function BancoDeMisiones() {
     })();
   }, []);
 
-  // CARGA: al cambiar de semana, marca que aún no hay datos válidos y carga los de la semana nueva
   useEffect(() => {
     const token = ++loadTokenRef.current;
-    loadedWeekRef.current = null;
     setWeekData(null);
     setConfirmReset(false);
     (async () => {
       try {
         const res = await window.storage.get(`week:${weekKey}`, true);
         if (loadTokenRef.current !== token) return;
-        loadedWeekRef.current = weekKey;
-        setWeekData(res ? normalizeWeekData(JSON.parse(res.value)) : emptyWeekData());
+        setWeekData(res ? normalizeWeekData(JSON.parse(res.value), pastDays) : emptyWeekData());
+        loadedWeekKeyRef.current = weekKey;
       } catch (e) {
         if (loadTokenRef.current !== token) return;
-        loadedWeekRef.current = weekKey;
         setWeekData(emptyWeekData());
+        loadedWeekKeyRef.current = weekKey;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekKey]);
 
-  // GUARDADO: solo si los datos en pantalla pertenecen a la semana que se está viendo
   useEffect(() => {
-    if (weekData === null || loadedWeekRef.current !== weekKey) return;
+    if (weekData === null) return;
+    // No guardar datos de la semana anterior en la clave de la semana nueva
+    // mientras el cambio de semana todavía se está cargando.
+    if (loadedWeekKeyRef.current !== weekKey) return;
     (async () => {
       try {
         await window.storage.set(`week:${weekKey}`, JSON.stringify(weekData), true);
@@ -473,12 +454,13 @@ function BancoDeMisiones() {
 
   const field = mode === 'hija' ? 'proposed' : 'confirmed';
 
-  const toggleMain = (key, i) => {
+  // Cama y ropa: solo el modo padre puede marcar/quitar un fallo, y solo en días que ya han llegado.
+  const toggleFail = (key, i) => {
+    if (mode !== 'padre' || i >= arrivedCount) return;
     setWeekData((prev) => {
-      const task = prev[key];
-      const arr = [...task[field]];
+      const arr = [...prev[key]];
       arr[i] = !arr[i];
-      return { ...prev, [key]: { ...task, [field]: arr } };
+      return { ...prev, [key]: arr };
     });
   };
 
@@ -503,18 +485,8 @@ function BancoDeMisiones() {
     setWeekData((prev) => ({ ...prev, avisosLavavajillas: Math.max(0, prev.avisosLavavajillas + delta) }));
   };
 
-  // CORRECCIÓN: la tarea libre ya no suma puntos directamente. En modo
-  // hija solo mueve el contador "propuesto" (una promesa, no cuenta para
-  // el bono); en modo padre mueve el contador "confirmado", que es el
-  // único que suma puntos. Así Irene no puede darse puntos ella sola.
   const addLibre = (delta) => {
-    setWeekData((prev) => ({
-      ...prev,
-      extras: {
-        ...prev.extras,
-        libre: { ...prev.extras.libre, [field]: Math.max(0, prev.extras.libre[field] + delta) },
-      },
-    }));
+    setWeekData((prev) => ({ ...prev, extras: { ...prev.extras, libre: Math.max(0, prev.extras.libre + delta) } }));
   };
 
   const resetWeek = () => {
@@ -522,16 +494,10 @@ function BancoDeMisiones() {
     setConfirmReset(false);
   };
 
-  const isPastDay = (i) => {
-    if (isPastWeek) return true;
-    if (isCurrentWeek) return i < todayIndex;
-    return false;
-  };
+  const failCount = (fails) => fails.reduce((sum, v, i) => sum + (i < arrivedCount && v ? 1 : 0), 0);
 
-  const failCount = (task) => task.confirmed.reduce((sum, v, i) => sum + (isPastDay(i) && !v ? 1 : 0), 0);
-
-  const camaFails = failCount(weekData.cama);
-  const ropaFails = failCount(weekData.ropa);
+  const camaFails = failCount(weekData.camaFail);
+  const ropaFails = failCount(weekData.ropaFail);
   const lavaFails = weekData.avisosLavavajillas;
   const camaFailed = camaFails >= FAIL_LIMIT;
   const ropaFailed = ropaFails >= FAIL_LIMIT;
@@ -544,22 +510,18 @@ function BancoDeMisiones() {
   const basePayOk = !camaFailed && !ropaFailed && !lavaFailed && !cuartoFailed && !cajonFailed;
   const baseEarned = basePayOk ? BASE_PAY : 0;
 
-  const camaConfirmed = weekData.cama.confirmed.filter(Boolean).length;
-  const ropaConfirmed = weekData.ropa.confirmed.filter(Boolean).length;
+  const camaConfirmed = Math.max(0, arrivedCount - camaFails);
+  const ropaConfirmed = Math.max(0, arrivedCount - ropaFails);
 
   const extraConfirmedCount = (key) => weekData.extras[key].confirmed.filter(Boolean).length;
-  // CORRECCIÓN: la tarea libre ahora suma con su contador "confirmado", no el número directo
   const extraPoints =
-    EXTRA_TASKS.reduce((s, t) => s + extraConfirmedCount(t.key) * t.points, 0) + weekData.extras.libre.confirmed * 1;
+    EXTRA_TASKS.reduce((s, t) => s + extraConfirmedCount(t.key) * t.points, 0) + weekData.extras.libre * 1;
   const extraBonus = extraPoints >= EXTRA_GOAL ? EXTRA_BONUS : 0;
   const total = baseEarned + extraBonus;
   const pointsPct = Math.min(100, (extraPoints / EXTRA_GOAL) * 100);
 
   const obligConfirmed = camaConfirmed + ropaConfirmed + (weekData.cuarto.confirmed ? 1 : 0);
   const xpPct = Math.round((obligConfirmed / 15) * 50) + Math.round(Math.min(1, extraPoints / EXTRA_GOAL) * 50);
-
-  // CORRECCIÓN: cuántas propuestas de tarea libre están aún sin confirmar por el padre
-  const librePending = Math.max(0, weekData.extras.libre.proposed - weekData.extras.libre.confirmed);
 
   return (
     <div className="gt-app">
@@ -667,23 +629,27 @@ function BancoDeMisiones() {
         {/* TAREA BASE */}
         <section className="gt-panel">
           <h2 className="gt-panel__title">Tareas base <span className="gt-panel__amount">{BASE_PAY.toFixed(2)} €</span></h2>
-          <p className="gt-panel__hint">2 fallos permitidos por tarea, 4 avisos. El cuarto y el cajón del baño no tienen margen.</p>
+          <p className="gt-panel__hint">Cama y ropa cuentan como hechas cada día; solo el modo padre puede quitarlas. 2 fallos permitidos por tarea, 4 avisos. El cuarto y el cajón del baño no tienen margen.</p>
 
-          <TaskRow
+          <AutoTaskRow
             label="Hacer la cama"
             sub="L-V antes del insti · S-D antes de las 12h"
             days={days}
-            task={weekData.cama}
-            onToggle={(i) => toggleMain('cama', i)}
+            fails={weekData.camaFail}
+            arrivedCount={arrivedCount}
+            canEdit={mode === 'padre'}
+            onToggle={(i) => toggleFail('camaFail', i)}
           />
           <Lives failCount={camaFails} limit={FAIL_LIMIT} />
 
-          <TaskRow
+          <AutoTaskRow
             label="Ropa sucia al cesto"
             sub="L-V antes del insti · S-D antes de las 12h"
             days={days}
-            task={weekData.ropa}
-            onToggle={(i) => toggleMain('ropa', i)}
+            fails={weekData.ropaFail}
+            arrivedCount={arrivedCount}
+            canEdit={mode === 'padre'}
+            onToggle={(i) => toggleFail('ropaFail', i)}
           />
           <Lives failCount={ropaFails} limit={FAIL_LIMIT} />
 
@@ -739,16 +705,7 @@ function BancoDeMisiones() {
               <div className="gt-panel__sub">lavavajillas sin guardar, zapatos/ropa en el salón, o baño desordenado</div>
             </div>
             <div className="gt-dish__controls">
-              <button
-                className="gt-round-btn"
-                onClick={() => mode === 'padre' && addAviso(-1)}
-                disabled={mode !== 'padre'}
-                aria-label={mode === 'padre' ? 'Quitar un aviso' : 'Solo se puede quitar un aviso en modo padre'}
-                title={mode === 'padre' ? undefined : 'Solo en modo padre'}
-                style={mode !== 'padre' ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-              >
-                <Minus size={14} />
-              </button>
+              <button className="gt-round-btn" onClick={() => addAviso(-1)} aria-label="Quitar un aviso"><Minus size={14} /></button>
               <span className="gt-mono gt-dish__count">{weekData.avisosLavavajillas} aviso{weekData.avisosLavavajillas === 1 ? '' : 's'}</span>
               <button className="gt-round-btn gt-round-btn--warn" onClick={() => addAviso(1)} aria-label="Añadir un aviso"><Plus size={14} /></button>
             </div>
@@ -779,40 +736,17 @@ function BancoDeMisiones() {
             />
           ))}
 
-          {/* CORRECCIÓN: la tarea libre ahora distingue "propuesto" (hija) de "confirmado" (padre) */}
           <div className="gt-dish">
             <div>
               <div className="gt-weekly__label"><Gift size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Tarea extra (sin definir)</div>
-              <div className="gt-panel__sub">
-                +1 punto cada vez, solo cuenta cuando el padre la confirma
-              </div>
+              <div className="gt-panel__sub">+1 punto cada vez que surja algo puntual</div>
             </div>
             <div className="gt-dish__controls">
-              <button
-                className="gt-round-btn"
-                onClick={() => addLibre(-1)}
-                aria-label={mode === 'padre' ? 'Quitar una confirmación' : 'Quitar una propuesta'}
-              >
-                <Minus size={14} />
-              </button>
-              <span className="gt-mono gt-dish__count">{weekData.extras.libre.confirmed}</span>
-              <button
-                className="gt-round-btn gt-round-btn--gold"
-                onClick={() => addLibre(1)}
-                aria-label={mode === 'padre' ? 'Confirmar una tarea sorpresa' : 'Proponer una tarea sorpresa'}
-              >
-                <Plus size={14} />
-              </button>
+              <button className="gt-round-btn" onClick={() => addLibre(-1)} aria-label="Quitar tarea sorpresa"><Minus size={14} /></button>
+              <span className="gt-mono gt-dish__count">{weekData.extras.libre}</span>
+              <button className="gt-round-btn gt-round-btn--gold" onClick={() => addLibre(1)} aria-label="Añadir tarea sorpresa"><Plus size={14} /></button>
             </div>
           </div>
-          {mode === 'hija' && (
-            <div className="gt-pending">
-              {weekData.extras.libre.proposed} propuesta{weekData.extras.libre.proposed === 1 ? '' : 's'} — pendiente de que papá la confirme
-            </div>
-          )}
-          {mode === 'padre' && librePending > 0 && (
-            <div className="gt-pending">{librePending} propuesta{librePending === 1 ? '' : 's'} de Irene sin confirmar</div>
-          )}
 
           <div className="gt-progress">
             <div className="gt-progress__labels">
@@ -858,6 +792,54 @@ function BancoDeMisiones() {
             <button className="gt-confirm__no" onClick={() => setConfirmReset(false)}>Cancelar</button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Casilla de cama/ropa: ✓ automático desde que llega el día, ✗ si el padre la quita.
+function AutoCell({ state, onClick, disabled, ariaLabel, sublabel }) {
+  const cls = state === 'done' ? 'confirmed' : state === 'failed' ? 'failed' : 'empty';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className={`gt-cell gt-cell--${cls}`}
+    >
+      <span className="gt-cell__mark">
+        {state === 'done' && <Check size={14} strokeWidth={3} />}
+        {state === 'failed' && <X size={14} strokeWidth={3} />}
+      </span>
+      {state === 'future' && <span className="gt-cell__letter">{sublabel}</span>}
+    </button>
+  );
+}
+
+function AutoTaskRow({ label, sub, days, fails, arrivedCount, canEdit, onToggle }) {
+  return (
+    <div className="gt-task-row">
+      <div className="gt-task-row__label">
+        <div>{label}</div>
+        {sub && <div className="gt-panel__sub">{sub}</div>}
+      </div>
+      <div className="gt-day-grid">
+        {days.map((d, i) => {
+          const arrived = i < arrivedCount;
+          const state = !arrived ? 'future' : fails[i] ? 'failed' : 'done';
+          const estado = state === 'failed' ? 'no cumplida' : state === 'done' ? 'cumplida' : 'pendiente';
+          return (
+            <AutoCell
+              key={i}
+              state={state}
+              disabled={!canEdit || !arrived}
+              onClick={() => onToggle(i)}
+              ariaLabel={`${label} — ${DAY_FULL[i]} ${d.getDate()}: ${estado}`}
+              sublabel={DAY_LETTERS[i]}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -960,7 +942,9 @@ const STYLES = `
 }
 .gt-cell__mark { line-height: 0; height: 12px; display: flex; align-items: center; }
 .gt-cell__letter { line-height: 1; margin-top: 1px; }
-.gt-cell:hover { border-color: var(--pink); color: var(--pink); }
+.gt-cell:not(:disabled):hover { border-color: var(--pink); color: var(--pink); }
+.gt-cell:disabled { cursor: default; }
+.gt-cell--failed { background: var(--red); border-color: var(--red); color: #fff; transform: scale(1.05); }
 .gt-cell--confirmed { background: var(--cyan); border-color: var(--cyan); color: #04342C; transform: scale(1.05); }
 .gt-cell--proposed { border-color: var(--gold); border-style: dashed; }
 .gt-cell__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
